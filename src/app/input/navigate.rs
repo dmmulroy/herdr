@@ -184,16 +184,7 @@ impl App {
         let previous_mode = self.state.mode;
         match action {
             NavigateAction::NewWorkspace => {
-                self.runtime_workspace_create(
-                    "tui.key.workspace.create",
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: None,
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                );
-                leave_navigate_mode(&mut self.state);
+                self.begin_tui_workspace_create("tui.key.workspace.create");
             }
             NavigateAction::NewWorktree => {
                 if let Some(ws_idx) = workspace_action_target(&self.state, context).filter(|idx| {
@@ -1524,8 +1515,7 @@ pub(super) fn execute_navigate_action_in_context(
     let previous_mode = state.mode;
     match action {
         NavigateAction::NewWorkspace => {
-            state.request_new_workspace = true;
-            leave_navigate_mode(state);
+            panic!("NewWorkspace requires the App-level runtime action dispatcher")
         }
         NavigateAction::NewWorktree => {
             if let Some(ws_idx) = workspace_action_target(state, context)
@@ -1968,18 +1958,137 @@ mod tests {
         assert_eq!(state.mode, Mode::Terminal);
     }
 
-    #[test]
-    fn custom_new_workspace_key_requests_and_exits_navigate() {
-        let mut state = state_with_workspaces(&["test"]);
-        state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+    #[tokio::test]
+    async fn new_workspace_key_opens_name_dialog_without_creating() {
+        let mut app = app_with_test_workspaces(&["test"]);
+        app.state.mode = Mode::Navigate;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
 
-        handle_navigate_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::empty()),
-        );
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
 
-        assert!(state.request_new_workspace);
-        assert_eq!(state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert!(app.state.name_input.is_empty());
+    }
+
+    #[tokio::test]
+    async fn new_workspace_key_can_create_immediately_without_an_existing_workspace() {
+        let mut app = app_with_test_workspaces(&[]);
+        app.state.prompt_new_workspace_name = false;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn saving_new_workspace_name_creates_it_with_the_trimmed_label() {
+        let mut app = app_with_test_workspaces(&["test"]);
+        app.state.mode = Mode::Navigate;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+        app.state.name_input = " logs ".into();
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(app.state.workspaces[1].custom_name.as_deref(), Some("logs"));
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn saving_empty_new_workspace_name_keeps_automatic_name() {
+        let mut app = app_with_test_workspaces(&["test"]);
+        app.state.mode = Mode::Navigate;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+        app.state.name_input = "   ".into();
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert!(app.state.workspaces[1].custom_name.is_none());
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn cancelling_new_workspace_name_creates_nothing() {
+        let mut app = app_with_test_workspaces(&["test"]);
+        app.state.mode = Mode::Navigate;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.name_input.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_new_workspace_name_with_no_workspaces_keeps_session_empty() {
+        let mut app = app_with_test_workspaces(&[]);
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+
+        assert!(!app.ensure_default_workspace());
+        assert!(app.state.workspaces.is_empty());
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    #[tokio::test]
+    async fn workspace_name_dialog_prevents_automatic_creation_when_none_exist() {
+        let mut app = app_with_test_workspaces(&[]);
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+
+        assert!(!app.ensure_default_workspace());
+        assert!(app.state.workspaces.is_empty());
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+    }
+
+    #[tokio::test]
+    async fn saving_workspace_name_dialog_creates_first_workspace() {
+        let mut app = app_with_test_workspaces(&[]);
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
+    async fn workspace_name_dialog_preserves_selected_workspace_cwd_until_save() {
+        let first_cwd = unique_temp_path("workspace-name-first-cwd");
+        let second_cwd = unique_temp_path("workspace-name-second-cwd");
+        std::fs::create_dir_all(&first_cwd).unwrap();
+        std::fs::create_dir_all(&second_cwd).unwrap();
+        let mut app = app_with_test_workspaces(&["first", "second"]);
+        let second_root = app.state.workspaces[1].tabs[0].root_pane;
+        let second_terminal = app.state.workspaces[1].panes[&second_root]
+            .attached_terminal_id
+            .clone();
+        app.state.terminals.get_mut(&second_terminal).unwrap().cwd = second_cwd.clone();
+        app.state.active = Some(0);
+        app.state.selected = 1;
+        app.state.mode = Mode::Navigate;
+        app.state.keybinds.new_workspace = crate::config::ActionKeybinds::prefix("g");
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()));
+        app.state.selected = 0;
+        app.state.terminals.get_mut(&second_terminal).unwrap().cwd = first_cwd.clone();
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        assert_eq!(app.state.workspaces[2].identity_cwd, second_cwd);
+
+        let _ = std::fs::remove_dir_all(first_cwd);
+        let _ = std::fs::remove_dir_all(second_cwd);
     }
 
     #[test]
@@ -2569,6 +2678,7 @@ command = "printf literal > '{}'"
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Navigate;
+        app.state.prompt_new_workspace_name = false;
 
         app.handle_navigate_key(TerminalKey::new(KeyCode::Char('n'), KeyModifiers::SHIFT));
 
@@ -2590,6 +2700,7 @@ command = "printf literal > '{}'"
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Navigate;
+        app.state.prompt_new_workspace_name = false;
 
         app.handle_navigate_key(TerminalKey::new(KeyCode::Char('N'), KeyModifiers::empty()));
 

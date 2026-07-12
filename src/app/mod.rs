@@ -512,11 +512,9 @@ impl App {
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
-            request_new_workspace: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
-            request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
             request_submit_worktree_open: false,
@@ -526,6 +524,8 @@ impl App {
             request_clipboard_write: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
+            workspace_name_intent: None,
+            allow_empty_workspace_after_cancel: false,
             rename_pane_target: None,
             worktree_create: None,
             worktree_open: None,
@@ -607,6 +607,7 @@ impl App {
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
             confirm_close: config.ui.confirm_close,
             prompt_new_tab_name: config.ui.prompt_new_tab_name,
+            prompt_new_workspace_name: config.ui.prompt_new_workspace_name,
             pane_borders: config.ui.pane_borders,
             pane_gaps: config.ui.pane_gaps,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
@@ -903,20 +904,6 @@ impl App {
                 needs_render = true;
             }
 
-            if self.state.request_new_workspace {
-                self.state.request_new_workspace = false;
-                self.runtime_workspace_create(
-                    "tui.workspace.create",
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: None,
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                );
-                needs_render = true;
-            }
-
             if self.state.request_new_tab {
                 self.state.request_new_tab = false;
                 let label = self.state.requested_new_tab_name.take();
@@ -940,19 +927,6 @@ impl App {
 
             if let Some(ws_idx) = self.state.request_open_existing_worktree.take() {
                 self.open_existing_worktree_dialog(ws_idx);
-                needs_render = true;
-            }
-
-            if let Some(cwd) = self.state.request_new_workspace_cwd.take() {
-                self.runtime_workspace_create(
-                    "tui.workspace.create_cwd",
-                    crate::api::schema::WorkspaceCreateParams {
-                        cwd: Some(cwd.display().to_string()),
-                        focus: true,
-                        label: None,
-                        env: Default::default(),
-                    },
-                );
                 needs_render = true;
             }
 
@@ -1119,7 +1093,17 @@ impl App {
     }
 
     pub(crate) fn ensure_default_workspace(&mut self) -> bool {
-        if !self.state.workspaces.is_empty() || self.state.mode == Mode::Onboarding {
+        if !self.state.workspaces.is_empty() {
+            self.state.allow_empty_workspace_after_cancel = false;
+            return false;
+        }
+        if self.state.mode == Mode::Onboarding
+            || self.state.allow_empty_workspace_after_cancel
+            || matches!(
+                self.state.workspace_name_intent,
+                Some(state::WorkspaceNameIntent::Create { .. })
+            )
+        {
             return false;
         }
 
@@ -1383,6 +1367,7 @@ impl App {
                     config.ui.right_click_passthrough_modifiers();
                 self.state.confirm_close = config.ui.confirm_close;
                 self.state.prompt_new_tab_name = config.ui.prompt_new_tab_name;
+                self.state.prompt_new_workspace_name = config.ui.prompt_new_workspace_name;
                 self.state.pane_borders = config.ui.pane_borders;
                 self.state.pane_gaps = config.ui.pane_gaps;
                 self.state.show_agent_labels_on_pane_borders =
@@ -2351,6 +2336,17 @@ mod tests {
     }
 
     #[test]
+    fn startup_uses_workspace_name_prompt_config() {
+        let mut config = Config::default();
+        config.ui.prompt_new_workspace_name = false;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        assert!(!app.state.prompt_new_workspace_name);
+    }
+
+    #[test]
     fn theme_auto_switch_is_opt_in_and_preserves_manual_default() {
         let mut config = Config::default();
         config.theme.name = Some("tokyo-night".to_string());
@@ -2536,7 +2532,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\ncopy_on_select = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
+            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\ncopy_on_select = false\nright_click_passthrough_modifier = \"ctrl\"\nprompt_new_workspace_name = false\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2584,6 +2580,7 @@ mod tests {
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
         assert!(!app.state.redraw_on_focus_gained);
         assert!(!app.state.copy_on_select);
+        assert!(!app.state.prompt_new_workspace_name);
         assert!(app.state.selection.is_none());
         assert!(app.state.selection_autoscroll.is_none());
         assert!(app.selection_autoscroll_deadline.is_none());
@@ -2625,6 +2622,31 @@ mod tests {
         assert_eq!(toast.kind, crate::app::state::ToastKind::UpdateInstalled);
         assert_eq!(toast.title, "reloaded config");
         assert_eq!(toast.context, "using config.toml");
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn reload_workspace_name_prompt_policy_keeps_open_dialog() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-workspace-name-prompt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[ui]\nprompt_new_workspace_name = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+        let mut app = test_app();
+        app.begin_tui_workspace_create("test.workspace.create");
+
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert!(!app.state.prompt_new_workspace_name);
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+        app.begin_tui_workspace_create("test.workspace.create.after_reload");
+        assert_eq!(app.state.workspaces.len(), 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -4632,7 +4654,7 @@ last_pane = "prefix+tab"
         app.state.workspaces = vec![Workspace::test_new("old")];
         app.state.active = Some(0);
         app.state.selected = 0;
-        app.state.mode = Mode::RenameWorkspace;
+        input::open_rename_workspace(&mut app.state, &app.terminal_runtimes, 0);
         app.state.name_input = "new".into();
 
         app.route_client_input(b"\r".to_vec());

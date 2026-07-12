@@ -310,6 +310,7 @@ redraw_on_focus_gained = true
 mouse_scroll_lines = 3
 confirm_close = true
 prompt_new_tab_name = true
+prompt_new_workspace_name = true
 pane_borders = true
 pane_gaps = true
 show_agent_labels_on_pane_borders = false
@@ -323,7 +324,7 @@ accent = "cyan"
 
 エージェントパネルはすべてのスペースをまたいですべてのエージェントを表示します。`agent_panel_sort` には `spaces` または `priority` を指定できます。`workspaces` は `spaces` のエイリアスとして受け付けられます。デフォルトは `spaces` で、エージェントをスペース順にグループ化したまま保ちます。`priority` は注意の優先度順に並べます: blocked、done、working、idle、そして unknown です。同じステータス内では、最近状態が変わったエージェントが先に表示されます。
 
-`confirm_close` はワークスペースを閉じるときに確認を求めるかどうかを制御します。`prompt_new_tab_name` は新しいタブで先にラベルを尋ねるかどうかを制御します。
+`confirm_close` はワークスペースを閉じるときに確認を求めるかどうかを制御します。`prompt_new_tab_name` は新しいタブで先にラベルを尋ねるかどうかを制御します。`prompt_new_workspace_name` は、対話的な TUI 操作でワークスペースを作成する前に任意のラベルを尋ねるかどうかを制御します。CLI と API からの作成は引き続き即時に行われます。
 
 URL の command+クリックなど、通常のクリックをターミナルに処理させたい場合は `mouse_capture = false` を設定してください。マウスキャプチャが有効な場合、ターミナルが修飾キー付きクリックを Herdr に送れば、Ctrl+クリックでペインのリンクを開けます。これは macOS も含みます。Herdr がマウス入力をキャプチャしている間、Cmd+クリックは通常のクリックと区別して報告されません。ターミナルネイティブのバイパス経路には、Linux では Shift+Ctrl+クリック、macOS では Shift+Cmd+クリックを使ってください。
 

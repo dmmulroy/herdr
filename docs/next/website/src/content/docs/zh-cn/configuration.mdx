@@ -310,6 +310,7 @@ redraw_on_focus_gained = true
 mouse_scroll_lines = 3
 confirm_close = true
 prompt_new_tab_name = true
+prompt_new_workspace_name = true
 pane_borders = true
 pane_gaps = true
 show_agent_labels_on_pane_borders = false
@@ -323,7 +324,7 @@ accent = "cyan"
 
 智能体面板显示所有空间中的所有智能体。`agent_panel_sort` 可以是 `spaces` 或 `priority`;`workspaces` 作为 `spaces` 的别名被接受。默认是 `spaces`,让智能体按空间顺序分组。`priority` 按关注优先级排序: blocked、done、working、idle,然后是 unknown。同一状态内,最近改变状态的智能体排在前面。
 
-`confirm_close` 控制关闭工作区时是否需要确认。`prompt_new_tab_name` 控制新标签页是否先询问名称。
+`confirm_close` 控制关闭工作区时是否需要确认。`prompt_new_tab_name` 控制新标签页是否先询问名称。`prompt_new_workspace_name` 控制交互式 TUI 操作在创建工作区前是否询问可选名称；CLI 和 API 创建仍会立即执行。
 
 如果想让终端处理普通点击,比如 command+点击 URL,设置 `mouse_capture = false`。鼠标捕获启用时,如果终端把带修饰键的点击传给 Herdr,Ctrl+点击可以打开窗格链接。macOS 也是如此;Herdr 捕获鼠标输入期间,Cmd+点击不会与普通点击区分上报。终端原生的绕过路径: Linux 上用 Shift+Ctrl+点击,macOS 上用 Shift+Cmd+点击。
 

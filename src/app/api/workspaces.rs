@@ -211,6 +211,41 @@ mod tests {
     use super::*;
     use crate::{api::schema::SuccessResponse, config::Config, workspace::Workspace};
 
+    #[tokio::test]
+    async fn workspace_create_response_and_event_include_final_custom_label() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&Config::default(), true, None, api_rx, event_hub.clone());
+
+        let response = app.handle_workspace_create(
+            "req".into(),
+            WorkspaceCreateParams {
+                cwd: None,
+                focus: true,
+                label: Some("logs".into()),
+                env: Default::default(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::WorkspaceCreated { workspace, .. } = success.result else {
+            panic!("expected workspace_created response");
+        };
+        assert_eq!(workspace.label, "logs");
+        let events = event_hub.events_after(0);
+        let created = events
+            .iter()
+            .find_map(|(_, event)| match &event.data {
+                EventData::WorkspaceCreated { workspace } => Some(workspace),
+                _ => None,
+            })
+            .expect("workspace.created event");
+        assert_eq!(created.label, "logs");
+        assert!(!events
+            .iter()
+            .any(|(_, event)| event.event == EventKind::WorkspaceRenamed));
+    }
+
     // `new_cwd = follow` must anchor on the focused pane for every creation
     // surface. Splits and tabs already do; a new workspace must follow the
     // focused pane too, not the source workspace's first-tab root pane.

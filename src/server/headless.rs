@@ -616,20 +616,6 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_onboarding");
         }
 
-        if self.app.state.request_new_workspace {
-            self.app.state.request_new_workspace = false;
-            let response = self.headless_workspace_create("headless.workspace.create", None, None);
-            if let Err(error) = response {
-                error!(
-                    code = %error.code,
-                    message = %error.message,
-                    "failed to create workspace"
-                );
-            }
-            needs_render = true;
-            crate::render_prof::event("full_render_cause.deferred_new_workspace");
-        }
-
         if self.app.state.request_new_tab {
             self.app.state.request_new_tab = false;
             let label = self.app.state.requested_new_tab_name.take();
@@ -655,24 +641,6 @@ impl HeadlessServer {
             self.app.open_existing_worktree_dialog(ws_idx);
             needs_render = true;
             crate::render_prof::event("full_render_cause.deferred_worktree_dialog");
-        }
-
-        if let Some(cwd) = self.app.state.request_new_workspace_cwd.take() {
-            let response = self.headless_workspace_create(
-                "headless.workspace.create_cwd",
-                Some(cwd.display().to_string()),
-                None,
-            );
-            if let Err(error) = response {
-                error!(
-                    code = %error.code,
-                    message = %error.message,
-                    "failed to create workspace at requested cwd"
-                );
-                self.app.state.mode = app::Mode::Navigate;
-            }
-            needs_render = true;
-            crate::render_prof::event("full_render_cause.deferred_workspace_cwd");
         }
 
         if let Some(ws_idx) = self.app.state.request_remove_linked_worktree.take() {
@@ -710,23 +678,6 @@ impl HeadlessServer {
         }
 
         needs_render
-    }
-
-    fn headless_workspace_create(
-        &mut self,
-        id: &'static str,
-        cwd: Option<String>,
-        label: Option<String>,
-    ) -> Result<(), api::schema::ErrorBody> {
-        self.dispatch_headless_runtime_mutation(
-            id,
-            api::schema::Method::WorkspaceCreate(api::schema::WorkspaceCreateParams {
-                cwd,
-                focus: true,
-                label,
-                env: Default::default(),
-            }),
-        )
     }
 
     fn headless_tab_create(
@@ -4296,31 +4247,6 @@ mod tests {
             Some(expected_version.as_str())
         );
         assert!(server.app.event_rx.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn headless_deferred_workspace_create_uses_runtime_events() {
-        let event_hub = api::EventHub::default();
-        let mut server = test_headless_server_with_event_hub(event_hub.clone());
-
-        server.app.state.request_new_workspace = true;
-
-        assert!(server.handle_deferred_requests_headless());
-        assert!(!server.app.state.request_new_workspace);
-        assert_eq!(
-            event_hub
-                .events_after(0)
-                .into_iter()
-                .map(|(_, event)| event.event)
-                .collect::<Vec<_>>(),
-            vec![
-                api::schema::EventKind::WorkspaceCreated,
-                api::schema::EventKind::TabCreated,
-                api::schema::EventKind::PaneCreated,
-                api::schema::EventKind::LayoutUpdated,
-            ]
-        );
-        shutdown_test_runtimes(&mut server);
     }
 
     #[tokio::test]

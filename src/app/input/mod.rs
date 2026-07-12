@@ -44,16 +44,19 @@ mod settings;
 mod sidebar;
 mod terminal;
 
+#[cfg(test)]
+pub(crate) use self::modal::open_rename_workspace;
 pub(crate) use self::{
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
-        insert_navigator_search_text, insert_rename_input_text,
+        insert_navigator_search_text, insert_rename_input_text, open_new_workspace_dialog,
     },
     navigate::{
         terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
     },
     settings::open_settings_at,
 };
+
 use self::{
     modal::{
         modal_action_from_key, ModalAction, ONBOARDING_WELCOME_ACTIONS, RELEASE_NOTES_ACTIONS,
@@ -295,6 +298,9 @@ impl App {
             }
             if let Some(action) = self.state.handle_mouse(&mut self.terminal_runtimes, mouse) {
                 match action {
+                    MouseAction::NewWorkspace => {
+                        self.begin_tui_workspace_create("tui.mouse.workspace.create")
+                    }
                     MouseAction::Settings(action) => match action {
                         SettingsAction::SaveTheme(name) => self.save_theme(&name),
                         SettingsAction::SaveSound(enabled) => self.save_sound(enabled),

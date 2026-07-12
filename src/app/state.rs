@@ -1311,6 +1311,12 @@ pub(crate) struct PaneFocusTarget {
     pub pane_id: PaneId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceNameIntent {
+    Create { cwd: std::path::PathBuf },
+    Rename { workspace_id: String },
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -1331,11 +1337,9 @@ pub struct AppState {
     /// Set when the current client should detach from the persistent session.
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
-    pub request_new_workspace: bool,
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
-    pub request_new_workspace_cwd: Option<std::path::PathBuf>,
     pub request_remove_linked_worktree: Option<usize>,
     pub request_submit_worktree_create: bool,
     pub request_submit_worktree_open: bool,
@@ -1349,6 +1353,9 @@ pub struct AppState {
     pub request_clipboard_write: Option<Vec<u8>>,
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
+    pub workspace_name_intent: Option<WorkspaceNameIntent>,
+    /// Keep a deliberately empty session empty after cancelling first-workspace creation.
+    pub allow_empty_workspace_after_cancel: bool,
     pub rename_pane_target: Option<PaneId>,
     pub worktree_create: Option<WorktreeCreateState>,
     pub worktree_open: Option<WorktreeOpenState>,
@@ -1414,6 +1421,7 @@ pub struct AppState {
     pub mouse_scroll_lines: usize,
     pub confirm_close: bool,
     pub prompt_new_tab_name: bool,
+    pub prompt_new_workspace_name: bool,
     pub pane_borders: bool,
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
@@ -1687,11 +1695,9 @@ impl AppState {
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
-            request_new_workspace: false,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
-            request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
             request_submit_worktree_open: false,
@@ -1701,6 +1707,8 @@ impl AppState {
             request_clipboard_write: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
+            workspace_name_intent: None,
+            allow_empty_workspace_after_cancel: false,
             rename_pane_target: None,
             worktree_create: None,
             worktree_open: None,
@@ -1773,6 +1781,7 @@ impl AppState {
             mouse_scroll_lines: crate::config::DEFAULT_MOUSE_SCROLL_LINES,
             confirm_close: true,
             prompt_new_tab_name: true,
+            prompt_new_workspace_name: true,
             pane_borders: true,
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,

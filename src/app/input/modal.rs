@@ -7,6 +7,7 @@ use crate::{
     app::{
         state::{
             AppState, ContextMenuKind, ContextMenuState, MenuListState, Mode, NavigatorStateFilter,
+            WorkspaceNameIntent,
         },
         App,
     },
@@ -297,23 +298,38 @@ pub(crate) fn handle_keybind_help_key(state: &mut AppState, key: KeyEvent) {
     }
 }
 
-pub(super) fn open_rename_workspace(
+fn clear_name_modal_state(state: &mut AppState) {
+    state.creating_new_tab = false;
+    state.requested_new_tab_name = None;
+    state.workspace_name_intent = None;
+    state.rename_pane_target = None;
+    state.name_input.clear();
+    state.name_input_replace_on_type = false;
+}
+
+pub(crate) fn open_rename_workspace(
     state: &mut AppState,
     terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
     ws_idx: usize,
 ) {
+    let workspace_id = state.workspaces[ws_idx].id.clone();
+    let name = state.workspaces[ws_idx].display_name_from(&state.terminals, terminal_runtimes);
+    clear_name_modal_state(state);
     state.selected = ws_idx;
-    state.rename_pane_target = None;
-    state.name_input =
-        state.workspaces[ws_idx].display_name_from(&state.terminals, terminal_runtimes);
-    state.name_input_replace_on_type = false;
+    state.workspace_name_intent = Some(WorkspaceNameIntent::Rename { workspace_id });
+    state.name_input = name;
+    state.mode = Mode::RenameWorkspace;
+}
+
+pub(crate) fn open_new_workspace_dialog(state: &mut AppState, cwd: std::path::PathBuf) {
+    clear_name_modal_state(state);
+    state.allow_empty_workspace_after_cancel = false;
+    state.workspace_name_intent = Some(WorkspaceNameIntent::Create { cwd });
     state.mode = Mode::RenameWorkspace;
 }
 
 pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool) {
-    state.creating_new_tab = false;
-    state.requested_new_tab_name = None;
-    state.rename_pane_target = None;
+    clear_name_modal_state(state);
     if let Some(ws) = state.active.and_then(|i| state.workspaces.get(i)) {
         if let Some(name) = ws.active_tab_display_name() {
             state.name_input = name;
@@ -331,13 +347,14 @@ pub(super) fn open_rename_pane(state: &mut AppState, pane_id: crate::layout::Pan
         return;
     };
     let terminal = state.terminals.get(&pane.attached_terminal_id);
-    state.creating_new_tab = false;
-    state.requested_new_tab_name = None;
-    state.rename_pane_target = Some(pane_id);
-    state.name_input = terminal
+    let name = terminal
         .and_then(|t| t.manual_label.clone())
         .unwrap_or_default();
-    state.name_input_replace_on_type = terminal.and_then(|t| t.manual_label.as_ref()).is_none();
+    let replace_on_type = terminal.and_then(|t| t.manual_label.as_ref()).is_none();
+    clear_name_modal_state(state);
+    state.rename_pane_target = Some(pane_id);
+    state.name_input = name;
+    state.name_input_replace_on_type = replace_on_type;
     state.mode = Mode::RenamePane;
 }
 
@@ -350,10 +367,10 @@ fn next_new_tab_default_name(state: &AppState) -> String {
 }
 
 pub(super) fn open_new_tab_dialog(state: &mut AppState) {
+    let name = next_new_tab_default_name(state);
+    clear_name_modal_state(state);
     state.creating_new_tab = true;
-    state.requested_new_tab_name = None;
-    state.rename_pane_target = None;
-    state.name_input = next_new_tab_default_name(state);
+    state.name_input = name;
     state.name_input_replace_on_type = true;
     state.mode = Mode::RenameTab;
 }
@@ -916,16 +933,30 @@ impl App {
         };
 
         match self.state.mode {
-            Mode::RenameWorkspace if !self.state.workspaces.is_empty() && !new_name.is_empty() => {
-                let workspace_id = self.public_workspace_id(self.state.selected);
-                self.runtime_workspace_rename(
-                    "tui.workspace.rename",
-                    crate::api::schema::WorkspaceRenameParams {
-                        workspace_id,
-                        label: new_name,
-                    },
-                );
-            }
+            Mode::RenameWorkspace => match self.state.workspace_name_intent.take() {
+                Some(WorkspaceNameIntent::Create { cwd }) => {
+                    let label = (!new_name.trim().is_empty()).then(|| new_name.trim().to_string());
+                    self.runtime_workspace_create(
+                        "tui.workspace.create_named",
+                        crate::api::schema::WorkspaceCreateParams {
+                            cwd: Some(cwd.display().to_string()),
+                            focus: true,
+                            label,
+                            env: Default::default(),
+                        },
+                    );
+                }
+                Some(WorkspaceNameIntent::Rename { workspace_id }) if !new_name.is_empty() => {
+                    self.runtime_workspace_rename(
+                        "tui.workspace.rename",
+                        crate::api::schema::WorkspaceRenameParams {
+                            workspace_id,
+                            label: new_name,
+                        },
+                    );
+                }
+                _ => {}
+            },
             Mode::RenameTab if self.state.creating_new_tab => {
                 let default_name = next_new_tab_default_name(&self.state);
                 let label = if new_name.is_empty() || new_name == default_name {
@@ -1254,11 +1285,15 @@ impl App {
 }
 
 fn cancel_rename_modal(state: &mut AppState) {
-    state.creating_new_tab = false;
-    state.requested_new_tab_name = None;
-    state.rename_pane_target = None;
-    state.name_input.clear();
-    state.name_input_replace_on_type = false;
+    let cancelled_first_workspace_create = state.workspaces.is_empty()
+        && matches!(
+            state.workspace_name_intent,
+            Some(WorkspaceNameIntent::Create { .. })
+        );
+    clear_name_modal_state(state);
+    if cancelled_first_workspace_create {
+        state.allow_empty_workspace_after_cancel = true;
+    }
     leave_modal(state);
 }
 
@@ -1475,6 +1510,25 @@ mod tests {
             snapshot.workspaces[0].tabs[0].custom_name.as_deref(),
             Some("logs")
         );
+    }
+
+    #[test]
+    fn workspace_rename_keeps_target_when_workspaces_reorder_while_modal_is_open() {
+        let mut app = app_with_test_workspaces(&["first", "second"]);
+        open_rename_workspace(&mut app.state, &app.terminal_runtimes, 1);
+        let target_id = app.state.workspaces[1].id.clone();
+        app.state.workspaces.swap(0, 1);
+        app.state.name_input = "renamed".into();
+
+        app.handle_rename_key_via_api(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+
+        let target = app
+            .state
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == target_id)
+            .unwrap();
+        assert_eq!(target.custom_name.as_deref(), Some("renamed"));
     }
 
     #[test]
