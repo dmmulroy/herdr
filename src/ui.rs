@@ -664,6 +664,28 @@ mod tests {
     }
 
     #[test]
+    fn workspace_creation_dialog_renders_new_workspace_title() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::RenameWorkspace;
+        app.workspace_name_intent =
+            Some(crate::app::state::WorkspaceNameIntent::Create { cwd: "/tmp".into() });
+
+        let area = Rect::new(0, 0, 80, 20);
+        compute_view(&mut app, area);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let screen = (0..area.height)
+            .map(|row| buffer_row_text(terminal.backend().buffer(), area, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("new workspace"), "{screen}");
+        assert!(screen.contains("save"), "{screen}");
+        assert!(screen.contains("clear"), "{screen}");
+        assert!(screen.contains("cancel"), "{screen}");
+    }
+
+    #[test]
     fn mobile_width_uses_header_and_full_width_terminal() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];

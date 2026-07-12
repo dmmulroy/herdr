@@ -11,7 +11,10 @@ use super::widgets::{
     action_button_row_rects, centered_popup_rect, panel_contrast_fg, render_action_button,
     render_modal_header, render_modal_shell, render_panel_shell, ActionButtonSpec,
 };
-use crate::app::{state::WorktreeOpenState, AppState, Mode};
+use crate::app::{
+    state::{WorkspaceNameIntent, WorktreeOpenState},
+    AppState, Mode,
+};
 
 const NEW_LINKED_WORKTREE_POPUP_WIDTH: u16 = 68;
 const NEW_LINKED_WORKTREE_POPUP_HEIGHT: u16 = 12;
@@ -43,6 +46,14 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
     super::dim_background(frame, area);
 
     let title = match app.mode {
+        Mode::RenameWorkspace
+            if matches!(
+                app.workspace_name_intent.as_ref(),
+                Some(WorkspaceNameIntent::Create { .. })
+            ) =>
+        {
+            "new workspace"
+        }
         Mode::RenameWorkspace => "rename workspace",
         Mode::RenameTab if app.creating_new_tab => "new tab",
         Mode::RenameTab => "rename tab",
